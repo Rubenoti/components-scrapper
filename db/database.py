@@ -17,12 +17,13 @@ def _get_dsn() -> str:
     dsn = os.getenv("DATABASE_URL")
     if dsn:
         return dsn
-    # Construcción desde variables individuales
+
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
-    db   = os.getenv("POSTGRES_DB",   "price_tracker")
+    db = os.getenv("POSTGRES_DB", "price_tracker")
     user = os.getenv("POSTGRES_USER", "postgres")
-    pwd  = os.getenv("POSTGRES_PASSWORD", "")
+    pwd = os.getenv("POSTGRES_PASSWORD", "")
+
     return f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
 
 
@@ -42,8 +43,15 @@ def get_connection():
         conn.close()
 
 
+def _normalize_row(row: dict) -> dict:
+    return {
+        k: float(v) if isinstance(v, Decimal) else v
+        for k, v in dict(row).items()
+    }
+
+
 def init_db():
-    """Crea las tablas y el índice si no existen."""
+    """Crea las tablas, índices y constraints si no existen."""
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -59,7 +67,9 @@ def init_db():
                         active       BOOLEAN DEFAULT TRUE,
                         created_at   TIMESTAMPTZ DEFAULT NOW()
                     );
+                """)
 
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS price_records (
                         id         SERIAL PRIMARY KEY,
                         product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -70,23 +80,51 @@ def init_db():
                         raw_title  TEXT DEFAULT '',
                         condition  TEXT DEFAULT 'new'
                     );
-
-                    CREATE INDEX IF NOT EXISTS idx_price_records_product
-                        ON price_records(product_id, scraped_at DESC);
                 """)
+
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_price_records_product
+                    ON price_records(product_id, scraped_at DESC);
+                """)
+
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_products_name_source_url
+                    ON products(name, source, url);
+                """)
+
         logger.info("PostgreSQL: tablas inicializadas — DSN: %s", _get_dsn())
     except Exception as e:
-        logger.warning("Error al inicializar tablas (posiblemente ya existen): %s", e)
+        logger.warning("Error al inicializar tablas: %s", e)
 
 
 def upsert_product(p: Product) -> int:
+    """
+    Inserta o actualiza un producto usando como clave lógica:
+    (name, source, url)
+    """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO products (name, url, source, target_price, category, notes, active)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
-                   RETURNING id""",
-                (p.name, p.url, p.source, p.target_price, p.category, p.notes, p.active)
+                """
+                INSERT INTO products (name, url, source, target_price, category, notes, active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (name, source, url)
+                DO UPDATE SET
+                    target_price = EXCLUDED.target_price,
+                    category = EXCLUDED.category,
+                    notes = EXCLUDED.notes,
+                    active = EXCLUDED.active
+                RETURNING id
+                """,
+                (
+                    p.name,
+                    p.url,
+                    p.source,
+                    p.target_price,
+                    p.category,
+                    p.notes,
+                    p.active,
+                ),
             )
             return cur.fetchone()["id"]
 
@@ -95,46 +133,64 @@ def save_price(record: PriceRecord):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO price_records
-                       (product_id, price, currency, in_stock, scraped_at, raw_title, condition)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (record.product_id, record.price, record.currency, record.in_stock,
-                 record.scraped_at, record.raw_title, record.condition)
+                """
+                INSERT INTO price_records
+                    (product_id, price, currency, in_stock, scraped_at, raw_title, condition)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    record.product_id,
+                    record.price,
+                    record.currency,
+                    record.in_stock,
+                    record.scraped_at,
+                    record.raw_title,
+                    record.condition,
+                ),
             )
 
 
 def get_active_products() -> list[Product]:
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM products WHERE active = TRUE")
+            cur.execute("SELECT * FROM products WHERE active = TRUE ORDER BY id ASC")
             rows = cur.fetchall()
-    return [Product(**{k: float(v) if isinstance(v, Decimal) else v for k, v in dict(r).items()}) for r in rows]
+
+    return [Product(**_normalize_row(r)) for r in rows]
 
 
 def get_last_price(product_id: int) -> Optional[PriceRecord]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT * FROM price_records
-                   WHERE product_id = %s
-                   ORDER BY scraped_at DESC LIMIT 1""",
-                (product_id,)
+                """
+                SELECT * FROM price_records
+                WHERE product_id = %s
+                ORDER BY scraped_at DESC, id DESC
+                LIMIT 1
+                """,
+                (product_id,),
             )
             row = cur.fetchone()
-    return PriceRecord(**{k: float(v) if isinstance(v, Decimal) else v for k, v in dict(row).items()}) if row else None
+
+    return PriceRecord(**_normalize_row(row)) if row else None
 
 
 def get_price_history(product_id: int, limit: int = 30) -> list[PriceRecord]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT * FROM price_records
-                   WHERE product_id = %s
-                   ORDER BY scraped_at DESC LIMIT %s""",
-                (product_id, limit)
+                """
+                SELECT * FROM price_records
+                WHERE product_id = %s
+                ORDER BY scraped_at DESC, id DESC
+                LIMIT %s
+                """,
+                (product_id, limit),
             )
             rows = cur.fetchall()
-    return [PriceRecord(**{k: float(v) if isinstance(v, Decimal) else v for k, v in dict(r).items()}) for r in rows]
+
+    return [PriceRecord(**_normalize_row(r)) for r in rows]
 
 
 def get_min_price(product_id: int) -> Optional[float]:
@@ -142,21 +198,27 @@ def get_min_price(product_id: int) -> Optional[float]:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT MIN(price) AS min_price FROM price_records WHERE product_id = %s",
-                (product_id,)
+                (product_id,),
             )
             row = cur.fetchone()
+
     return float(row["min_price"]) if row and row["min_price"] is not None else None
 
 
 def get_yesterday_price(product_id: int) -> Optional[PriceRecord]:
-    """Obtiene el último precio registrado ayer (día anterior)."""
+    """Obtiene el último precio registrado antes del día actual."""
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT * FROM price_records
-                   WHERE product_id = %s AND DATE(scraped_at) < DATE(NOW())
-                   ORDER BY scraped_at DESC LIMIT 1""",
-                (product_id,)
+                """
+                SELECT * FROM price_records
+                WHERE product_id = %s
+                  AND DATE(scraped_at) < DATE(NOW())
+                ORDER BY scraped_at DESC, id DESC
+                LIMIT 1
+                """,
+                (product_id,),
             )
             row = cur.fetchone()
-    return PriceRecord(**{k: float(v) if isinstance(v, Decimal) else v for k, v in dict(row).items()}) if row else None
+
+    return PriceRecord(**_normalize_row(row)) if row else None

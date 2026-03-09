@@ -1,17 +1,15 @@
 """
 Script de setup inicial — añade los productos del build a la DB.
-URLs verificadas en PcComponentes en marzo 2026.
 
-Ejecutar una vez:
+Ejecutar:
     python setup_products.py
 """
+
 from db.database import init_db, upsert_product
 from models.product import Product
 
 
 PRODUCTS = [
-    # ─── GPU (objetivo segunda mano Wallapop) ────────────────────────────────
-    # Wallapop no usa URL directa, busca por keyword
     Product(
         id=None,
         name="RTX 3090 24GB",
@@ -20,10 +18,8 @@ PRODUCTS = [
         target_price=550.0,
         category="gpu",
         notes="Sin historial minero. Verificar con FurMark antes de comprar. Buscar también '3090 Ti'.",
+        active=True,
     ),
-
-    # ─── CPU ─────────────────────────────────────────────────────────────────
-    # URL verificada ✅
     Product(
         id=None,
         name="AMD Ryzen 5 7600",
@@ -32,10 +28,8 @@ PRODUCTS = [
         target_price=155.0,
         category="cpu",
         notes="Incluye disipador Wraith Stealth. 65W nominal.",
+        active=True,
     ),
-
-    # ─── Placa base ──────────────────────────────────────────────────────────
-    # URL verificada ✅ (también hay versión sin WiFi más barata)
     Product(
         id=None,
         name="ASUS TUF Gaming X670E-Plus WiFi",
@@ -44,9 +38,8 @@ PRODUCTS = [
         target_price=200.0,
         category="mobo",
         notes="2x PCIe 5.0 x16. 4x M.2. WiFi 6E. Soporta hasta 128GB DDR5.",
+        active=True,
     ),
-
-    # ─── Alternativa placa base (sin WiFi, algo más barata) ──────────────────
     Product(
         id=None,
         name="ASUS TUF Gaming X670E-Plus (sin WiFi)",
@@ -55,10 +48,8 @@ PRODUCTS = [
         target_price=180.0,
         category="mobo",
         notes="Alternativa sin WiFi. Mismas especificaciones PCIe.",
+        active=True,
     ),
-
-    # ─── RAM — versión CL30 (mejor latencia) ─────────────────────────────────
-    # URL verificada ✅
     Product(
         id=None,
         name="Kingston Fury Beast DDR5 6000MHz 32GB CL30",
@@ -67,10 +58,8 @@ PRODUCTS = [
         target_price=90.0,
         category="ram",
         notes="CL30 es mejor que CL36. Perfil XMP 3.0 (compatible EXPO en AM5 via BIOS).",
+        active=True,
     ),
-
-    # ─── RAM — alternativa con EXPO nativo ───────────────────────────────────
-    # URL verificada ✅
     Product(
         id=None,
         name="Kingston 32GB DDR5 6000MT/s Fury Beast EXPO",
@@ -79,10 +68,8 @@ PRODUCTS = [
         target_price=90.0,
         category="ram",
         notes="Versión con AMD EXPO nativo — mejor para AM5. Activar perfil EXPO en BIOS.",
+        active=True,
     ),
-
-    # ─── Fuente de alimentación — versión ATX 3.1 / PCIe 5.1 (más moderna) ──
-    # URL verificada ✅
     Product(
         id=None,
         name="Seasonic Focus GX-1000 ATX3 PCIe5.1 1000W Gold",
@@ -91,10 +78,8 @@ PRODUCTS = [
         target_price=160.0,
         category="psu",
         notes="ATX 3.1 + PCIe 5.1. 1000W para 2x 3090 futuro. 10 años garantía Seasonic.",
+        active=True,
     ),
-
-    # ─── SSD ─────────────────────────────────────────────────────────────────
-    # URL verificada ✅
     Product(
         id=None,
         name="WD Black SN850X 1TB NVMe PCIe Gen4",
@@ -103,10 +88,8 @@ PRODUCTS = [
         target_price=75.0,
         category="ssd",
         notes="7300MB/s lectura. Sin disipador (la X670E ya tiene disipadores M.2 integrados).",
+        active=True,
     ),
-
-    # ─── Caja ─────────────────────────────────────────────────────────────────
-    # Fractal Design Pop Air — airflow excelente para la 3090
     Product(
         id=None,
         name="Fractal Design Pop Air ATX",
@@ -115,14 +98,23 @@ PRODUCTS = [
         target_price=65.0,
         category="case",
         notes="Buen airflow frontal para la 3090. Alternativa: Lian Li Lancool 216.",
+        active=True,
     ),
 ]
 
 
 if __name__ == "__main__":
     init_db()
-    for p in PRODUCTS:
-        pid = upsert_product(p)
-        print(f"✅  [{p.category.upper():5}] {p.name[:55]:<55} | objetivo: {p.target_price:>6.0f}€ | fuente: {p.source}")
 
-    print(f"\n{len(PRODUCTS)} productos cargados. Ejecuta 'python tracker.py' para el primer ciclo.")
+    for p in PRODUCTS:
+        upsert_product(p)
+        print(
+            f"✅ [{p.category.upper():5}] "
+            f"{p.name[:55]:<55} | "
+            f"objetivo: {p.target_price:>6.0f}€ | "
+            f"fuente: {p.source}"
+        )
+
+    print(f"\n{len(PRODUCTS)} productos cargados/actualizados.")
+    print("Ejecuta 'python tracker.py' para un ciclo normal.")
+    print("Ejecuta 'python tracker.py --summary' para enviar resumen.")

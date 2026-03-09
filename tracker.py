@@ -1,29 +1,29 @@
 import argparse
 import logging
-import sys
-from datetime import datetime
+from typing import Optional
 
-from config.settings import load_settings
-from db.database import init_db, get_active_products, save_price, get_last_price, get_min_price, get_yesterday_price
+from config.settings import MIN_DROP_PCT_TO_NOTIFY
+from db.database import (
+    init_db,
+    get_active_products,
+    save_price,
+    get_last_price,
+    get_yesterday_price,
+)
+from models.product import PriceRecord
+from bot.telegram_bot import TelegramNotifier
 from scrapers.camel_scraper import scrape_camel
 from scrapers.pccomponentes_scraper import scrape_pccomponentes
 from scrapers.wallapop_scraper import search_wallapop
-from bot.telegram_bot import TelegramNotifier
-from models.product import PriceRecord
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
-logger = logging.getLogger("tracker")
-
-# Umbral mínimo de bajada para notificar (evita ruido por decimales)
-MIN_DROP_PCT_TO_NOTIFY = 2.0
+logger = logging.getLogger(__name__)
 
 
 def run_cycle(notifier: TelegramNotifier):
-    """Ciclo completo: scrape todos los productos activos y notifica si procede."""
     products = get_active_products()
     logger.info("Iniciando ciclo — %d productos activos", len(products))
 
@@ -31,31 +31,43 @@ def run_cycle(notifier: TelegramNotifier):
         logger.info("Procesando: %s [%s]", product.name, product.source)
 
         target_price = float(product.target_price)
+        previous_price = get_last_price(product.id)
 
-        new_record: PriceRecord | None = None
+        new_record: Optional[PriceRecord] = None
 
         if product.source == "amazon":
             new_record = scrape_camel(product.url, product.id)
+
         elif product.source == "pccomponentes":
             new_record = scrape_pccomponentes(product.url, product.id)
+
         elif product.source == "wallapop":
             listings = search_wallapop(
                 keyword=product.name,
                 product_id=product.id,
-                max_price=target_price * 1.3,  # margen del 30% sobre objetivo
+                max_price=target_price * 1.3,
             )
+
             if listings:
-                # Guarda el más barato encontrado
                 cheapest = min(listings, key=lambda r: r.price)
                 save_price(cheapest)
-                # Notifica si hay anuncios bajo objetivo
+
                 below_target = [l for l in listings if l.price <= target_price]
                 if below_target:
                     notifier.notify_wallapop_alert(
                         product_name=product.name,
-                        listings=[{"title": l.raw_title, "price": l.price} for l in below_target],
+                        listings=[
+                            {
+                                "title": l.raw_title,
+                                "price": l.price,
+                            }
+                            for l in below_target
+                        ],
                         target_price=product.target_price,
                     )
+            else:
+                logger.info("Sin resultados válidos en Wallapop para %s", product.name)
+
             continue
 
         if new_record is None:
@@ -64,71 +76,84 @@ def run_cycle(notifier: TelegramNotifier):
 
         save_price(new_record)
 
-        # Compara con el precio anterior para detectar bajadas
-        last = get_last_price(product.id)
-        if last and last.price > 0:
-            drop_pct = ((last.price - new_record.price) / last.price) * 100
+        if previous_price and previous_price.price > 0:
+            drop_pct = ((previous_price.price - new_record.price) / previous_price.price) * 100
+
+            logger.info(
+                "Precio anterior: %.2f€ | nuevo: %.2f€ | bajada: %.2f%%",
+                previous_price.price,
+                new_record.price,
+                drop_pct,
+            )
+
             if drop_pct >= MIN_DROP_PCT_TO_NOTIFY:
                 notifier.notify_price_drop(
                     product_name=product.name,
                     current_price=new_record.price,
-                    previous_price=last.price,
+                    previous_price=previous_price.price,
                     target_price=target_price,
                     url=product.url,
                     source=product.source,
                     condition=new_record.condition,
                 )
+        else:
+            logger.info("No hay precio previo para %s; se guarda como primera referencia.", product.name)
 
 
-def run_summary(notifier: TelegramNotifier):
-    """Resumen diario de todos los productos con su precio actual vs objetivo."""
+def send_summary(notifier: TelegramNotifier):
     products = get_active_products()
-    logger.info("Generando resumen diario — %d productos activos", len(products))
-    lines = []
+    logger.info("Generando resumen para %d productos activos", len(products))
+
+    lines = ["📊 <b>Resumen diario de precios</b>"]
 
     for product in products:
-        last = get_last_price(product.id)
-        min_price = get_min_price(product.id)
-        yesterday = get_yesterday_price(product.id)
+        current = get_last_price(product.id)
+        previous = get_yesterday_price(product.id)
 
-        if last:
-            target_price = float(product.target_price)
-            diff = last.price - target_price
-            status = "✅" if diff <= 0 else "⏳"
-            yesterday_str = ""
-            if yesterday:
-                diff_yesterday = last.price - yesterday.price
-                yesterday_str = f"\n   Diferencia ayer: {diff_yesterday:+.2f}€"
-            lines.append(
-                f"{status} <b>{product.name}</b>\n"
-                f"   Ahora: {last.price:.2f}€ | Objetivo: {target_price:.2f}€\n"
-                f"   Mínimo histórico: {min_price:.2f}€{yesterday_str}"
-            )
+        if current is None:
+            lines.append(f"• {product.name}: sin datos todavía")
+            continue
+
+        if previous and previous.price > 0:
+            delta = current.price - previous.price
+            pct = (delta / previous.price) * 100
+
+            if delta < 0:
+                trend = f"🔻 {abs(delta):.2f}€ ({abs(pct):.2f}%)"
+            elif delta > 0:
+                trend = f"🔺 {abs(delta):.2f}€ ({abs(pct):.2f}%)"
+            else:
+                trend = "➖ sin cambios"
         else:
-            lines.append(f"❓ {product.name} — sin datos aún")
+            trend = "🆕 primera referencia"
 
-    if lines:
-        logger.info("Enviando resumen diario a Telegram (%d productos)", len(lines))
-        notifier.notify_summary(lines)
-    else:
-        logger.warning("⚠️ No hay productos con datos para el resumen.")
+        lines.append(
+            f"• <b>{product.name}</b>\n"
+            f"  Actual: {current.price:.2f}€ | Objetivo: {float(product.target_price):.2f}€\n"
+            f"  Estado: {trend}"
+        )
+
+    notifier.send_message("\n".join(lines))
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Price tracker de componentes")
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Envía un resumen diario en lugar de ejecutar un ciclo de scraping",
+    )
+    return parser.parse_args()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Price Tracker")
-    parser.add_argument("--summary", action="store_true", help="Envía resumen diario")
-    args = parser.parse_args()
+    args = parse_args()
 
-    settings = load_settings()
     init_db()
-
-    notifier = TelegramNotifier(
-        token=settings["telegram_token"],
-        chat_id=settings["telegram_chat_id"],
-    )
+    notifier = TelegramNotifier()
 
     if args.summary:
-        run_summary(notifier)
+        send_summary(notifier)
     else:
         run_cycle(notifier)
 
