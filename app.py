@@ -21,7 +21,9 @@ async def lifespan(app: FastAPI):
         chat_id=settings["telegram_chat_id"],
     )
     
-    # Programar resumen diario a las 11:00
+    # Scraping diario a las 10:55 para tener datos frescos
+    scheduler.add_job(run_cycle, CronTrigger(hour=10, minute=55), args=[notifier], id="daily_scrape")
+    # Resumen diario a las 11:00
     scheduler.add_job(run_summary, CronTrigger(hour=11, minute=0), args=[notifier], id="daily_summary")
     scheduler.start()
     
@@ -43,5 +45,27 @@ def scrape():
 
 @app.post("/summary")
 def summary():
+    """Ejecuta scraping y envía el resumen a Telegram."""
+    run_cycle(notifier)
     run_summary(notifier)
-    return {"message": "Daily summary sent"}
+    return {"message": "Scraping and summary completed"}
+
+@app.get("/products")
+def list_products():
+    """Endpoint para ver todos los productos en la BD."""
+    from db.database import get_active_products
+    products = get_active_products()
+    return {
+        "count": len(products),
+        "products": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "source": p.source,
+                "target_price": float(p.target_price),
+                "url": p.url,
+                "active": p.active
+            }
+            for p in products
+        ]
+    }

@@ -83,6 +83,7 @@ def run_cycle(notifier: TelegramNotifier):
 def run_summary(notifier: TelegramNotifier):
     """Resumen diario de todos los productos con su precio actual vs objetivo."""
     products = get_active_products()
+    logger.info("Generando resumen diario — %d productos activos", len(products))
     lines = []
 
     for product in products:
@@ -107,9 +108,10 @@ def run_summary(notifier: TelegramNotifier):
             lines.append(f"❓ {product.name} — sin datos aún")
 
     if lines:
+        logger.info("Enviando resumen diario a Telegram (%d productos)", len(lines))
         notifier.notify_summary(lines)
     else:
-        logger.info("No hay productos activos para el resumen.")
+        logger.warning("⚠️ No hay productos con datos para el resumen.")
 
 
 def main():
