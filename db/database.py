@@ -44,36 +44,39 @@ def get_connection():
 
 def init_db():
     """Crea las tablas y el índice si no existen."""
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    id           SERIAL PRIMARY KEY,
-                    name         TEXT NOT NULL,
-                    url          TEXT NOT NULL DEFAULT '',
-                    source       TEXT NOT NULL,
-                    target_price NUMERIC(10,2) NOT NULL,
-                    category     TEXT NOT NULL,
-                    notes        TEXT DEFAULT '',
-                    active       BOOLEAN DEFAULT TRUE,
-                    created_at   TIMESTAMPTZ DEFAULT NOW()
-                );
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS products (
+                        id           SERIAL PRIMARY KEY,
+                        name         TEXT NOT NULL,
+                        url          TEXT NOT NULL DEFAULT '',
+                        source       TEXT NOT NULL,
+                        target_price NUMERIC(10,2) NOT NULL,
+                        category     TEXT NOT NULL,
+                        notes        TEXT DEFAULT '',
+                        active       BOOLEAN DEFAULT TRUE,
+                        created_at   TIMESTAMPTZ DEFAULT NOW()
+                    );
 
-                CREATE TABLE IF NOT EXISTS price_records (
-                    id         SERIAL PRIMARY KEY,
-                    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-                    price      NUMERIC(10,2) NOT NULL,
-                    currency   TEXT DEFAULT 'EUR',
-                    in_stock   BOOLEAN DEFAULT TRUE,
-                    scraped_at TIMESTAMPTZ DEFAULT NOW(),
-                    raw_title  TEXT DEFAULT '',
-                    condition  TEXT DEFAULT 'new'
-                );
+                    CREATE TABLE IF NOT EXISTS price_records (
+                        id         SERIAL PRIMARY KEY,
+                        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                        price      NUMERIC(10,2) NOT NULL,
+                        currency   TEXT DEFAULT 'EUR',
+                        in_stock   BOOLEAN DEFAULT TRUE,
+                        scraped_at TIMESTAMPTZ DEFAULT NOW(),
+                        raw_title  TEXT DEFAULT '',
+                        condition  TEXT DEFAULT 'new'
+                    );
 
-                CREATE INDEX IF NOT EXISTS idx_price_records_product
-                    ON price_records(product_id, scraped_at DESC);
-            """)
-    logger.info("PostgreSQL: tablas inicializadas — DSN: %s", _get_dsn())
+                    CREATE INDEX IF NOT EXISTS idx_price_records_product
+                        ON price_records(product_id, scraped_at DESC);
+                """)
+        logger.info("PostgreSQL: tablas inicializadas — DSN: %s", _get_dsn())
+    except Exception as e:
+        logger.warning("Error al inicializar tablas (posiblemente ya existen): %s", e)
 
 
 def upsert_product(p: Product) -> int:
