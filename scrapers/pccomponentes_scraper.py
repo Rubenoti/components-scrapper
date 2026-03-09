@@ -112,27 +112,3 @@ def _parse_title(soup: BeautifulSoup) -> Optional[str]:
     if title_elem:
         return title_elem.get_text(strip=True)
     return None
-                return price
-
-    return None
-
-
-def _parse_stock(soup: BeautifulSoup) -> bool:
-    # Busca indicadores de stock
-    out_of_stock_signals = ["sin stock", "agotado", "no disponible", "out of stock"]
-    page_text = soup.get_text().lower()
-    return not any(signal in page_text for signal in out_of_stock_signals)
-
-
-def _parse_title(soup: BeautifulSoup) -> str:
-    tag = soup.select_one("h1") or soup.find("title")
-    return tag.get_text(strip=True)[:200] if tag else ""
-
-
-def _text_to_float(text: str) -> Optional[float]:
-    cleaned = re.sub(r"[^\d,.]", "", text)
-    cleaned = cleaned.replace(".", "").replace(",", ".")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
