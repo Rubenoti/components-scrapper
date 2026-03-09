@@ -1,0 +1,1 @@
+CREATE DATABASE if not exists price_tracker;
