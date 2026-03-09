@@ -112,42 +112,6 @@ def _parse_title(soup: BeautifulSoup) -> Optional[str]:
     if title_elem:
         return title_elem.get_text(strip=True)
     return None
-        currency="EUR",
-        in_stock=in_stock,
-        scraped_at=datetime.now(),
-        raw_title=title,
-        condition="new",
-    )
-
-
-def _parse_price(soup: BeautifulSoup) -> Optional[float]:
-    # Selector principal: JSON-LD schema
-    import json
-    for script in soup.find_all("script", type="application/ld+json"):
-        try:
-            data = json.loads(script.string)
-            if isinstance(data, list):
-                data = data[0]
-            offers = data.get("offers", {})
-            if isinstance(offers, list):
-                offers = offers[0]
-            price_str = str(offers.get("price", ""))
-            if price_str:
-                return float(price_str)
-        except (json.JSONDecodeError, ValueError, AttributeError):
-            continue
-
-    # Fallback: selector CSS del precio visible
-    for selector in [
-        "[data-e2e='product-price'] .price",
-        ".price-container .price",
-        "span.price",
-        "[itemprop='price']",
-    ]:
-        tag = soup.select_one(selector)
-        if tag:
-            price = _text_to_float(tag.get_text(strip=True))
-            if price:
                 return price
 
     return None
