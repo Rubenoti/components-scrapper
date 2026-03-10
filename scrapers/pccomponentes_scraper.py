@@ -6,7 +6,7 @@ from typing import Optional
 import httpx
 from bs4 import BeautifulSoup
 
-from models.models import PriceRecord
+from models.product import PriceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +59,15 @@ def _parse_price(soup: BeautifulSoup) -> Optional[float]:
             price = _normalize_price(node.get_text(" ", strip=True))
 
         if price is not None:
+            logger.info("Precio detectado por selector '%s': %.2f€", selector, price)
             return price
 
     html = soup.get_text(" ", strip=True)
     match = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*€', html)
     if match:
-        return _normalize_price(match.group(1))
+        price = _normalize_price(match.group(1))
+        logger.info("Precio detectado por regex fallback: %s", price)
+        return price
 
     return None
 
@@ -79,7 +82,9 @@ def _parse_stock(soup: BeautifulSoup) -> bool:
         "próximamente",
     ]
 
-    return not any(signal in text for signal in negative_signals)
+    in_stock = not any(signal in text for signal in negative_signals)
+    logger.info("Stock detectado: %s", in_stock)
+    return in_stock
 
 
 def _parse_title(soup: BeautifulSoup) -> str:
@@ -98,36 +103,39 @@ def _parse_title(soup: BeautifulSoup) -> str:
         if node.name == "meta":
             content = node.get("content")
             if content:
+                logger.info("Título detectado por selector '%s': %s", selector, content[:80])
                 return content.strip()
 
         text = node.get_text(" ", strip=True)
         if text:
+            logger.info("Título detectado por selector '%s': %s", selector, text[:80])
             return text
 
     return "Producto en PcComponentes"
 
 
 def scrape_pccomponentes(url: str, product_id: int) -> Optional[PriceRecord]:
-    logger.info("Scrapeando PcComponentes: %s", url)
+    logger.info("Scrapeando PcComponentes product_id=%s url=%s", product_id, url)
 
     try:
         response = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
+        logger.info("PcComponentes status_code=%s final_url=%s", response.status_code, str(response.url))
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("Error HTTP en PcComponentes: %s", e)
+        logger.exception("Error HTTP en PcComponentes para product_id=%s: %s", product_id, e)
         return None
 
     soup = BeautifulSoup(response.text, "html.parser")
 
     price = _parse_price(soup)
     if price is None:
-        logger.warning("No se encontró precio en PcComponentes para %s", url)
+        logger.warning("No se encontró precio en PcComponentes para product_id=%s url=%s", product_id, url)
         return None
 
     in_stock = _parse_stock(soup)
     title = _parse_title(soup)
 
-    return PriceRecord(
+    record = PriceRecord(
         id=None,
         product_id=product_id,
         price=price,
@@ -137,3 +145,5 @@ def scrape_pccomponentes(url: str, product_id: int) -> Optional[PriceRecord]:
         raw_title=title,
         condition="new",
     )
+    logger.info("PriceRecord generado PcComponentes: %s", record)
+    return record

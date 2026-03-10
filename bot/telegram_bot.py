@@ -18,6 +18,11 @@ class TelegramNotifier:
                 "TelegramNotifier requiere TELEGRAM_TOKEN y TELEGRAM_CHAT_ID"
             )
 
+        logger.info(
+            "Inicializando TelegramNotifier con chat_id=%s token_present=%s",
+            self.chat_id,
+            bool(self.token),
+        )
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
     def send_message(self, message: str) -> bool:
@@ -29,13 +34,21 @@ class TelegramNotifier:
             "disable_web_page_preview": False,
         }
 
+        logger.info(
+            "Enviando mensaje a Telegram | chat_id=%s | longitud=%d",
+            self.chat_id,
+            len(message),
+        )
+
         try:
             response = httpx.post(url, json=payload, timeout=15)
+            logger.info("Telegram status code: %s", response.status_code)
+            logger.info("Telegram response body: %s", response.text)
             response.raise_for_status()
             logger.info("Telegram: mensaje enviado OK")
             return True
         except httpx.HTTPError as e:
-            logger.error("Telegram: error enviando mensaje: %s", e)
+            logger.exception("Telegram: error enviando mensaje: %s", e)
             return False
 
     def send(self, message: str) -> bool:
@@ -69,6 +82,7 @@ class TelegramNotifier:
         if below_target:
             msg += "\n\n✅ <b>¡ESTÁ POR DEBAJO DE TU PRECIO OBJETIVO!</b>"
 
+        logger.info("Enviando alerta de bajada para '%s'", product_name)
         self.send_message(msg)
 
     def notify_wallapop_alert(
@@ -78,6 +92,7 @@ class TelegramNotifier:
         target_price: float,
     ):
         if not listings:
+            logger.info("No hay listings para alerta Wallapop de '%s'", product_name)
             return
 
         msg = f"🔔 <b>Wallapop — {product_name}</b>\n"
@@ -95,4 +110,9 @@ class TelegramNotifier:
         if len(listings) > 5:
             msg += f"...y {len(listings) - 5} más en Wallapop."
 
+        logger.info(
+            "Enviando alerta Wallapop para '%s' con %d listings",
+            product_name,
+            len(listings),
+        )
         self.send_message(msg)
